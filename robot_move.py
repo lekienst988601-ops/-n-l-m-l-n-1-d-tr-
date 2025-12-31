@@ -244,46 +244,18 @@ class MoveRobot:
             torch.set_num_threads(self.num_workers)
 
         elif self.model_name == 'SAC':
-            from robot_neural_network import SAC
+            from robot_agent import SAC
             from robot_neural_network import ReplayMemorySAC
             self.updates = 0
-            self.agent = SAC(num_inputs = self.observation_space_dimension, update_interval=1, hidden_layer_size = self.hidden_layer_size[0], learning_rate = self.learning_rate_actor, device = self.device, epsilon = self.epsilon_initial, gamma = self.gamma, tau = self.tau)
+            self.agent = SAC(num_inputs = self.observation_space_dimension, num_actions=self.action_space_dimension, update_interval=1, hidden_layer_size = self.hidden_layer_size[0], learning_rate = self.learning_rate_actor, device = self.device, epsilon = self.epsilon_initial, gamma = self.gamma, tau = self.tau)
             self.memory = ReplayMemorySAC(10000)
-            # Set model for parallel computation, move model to devie
-            from torch.nn.parallel import DataParallel
-            if self.device_type != 'cpu':
-                # SAC agent is an object, not a module, so DataParallel wrapper might behave differently if not handled carefully
-                # But here agent seems to have internal modules (actor/critic)
-                # The original code wrapped agent in DataParallel.
-                # However, SAC class in robot_neural_network.py is an 'object', not 'nn.Module'.
-                # DataParallel requires nn.Module.
-                # Let's check robot_neural_network.py content again.
-                pass
-                # The original code did: self.agent = DataParallel(self.agent)
-                # If SAC inherits from object, DataParallel will fail.
-                # Let's assume the previous code was correct or I should fix it if it wasn't.
-                # robot_neural_network.py: class SAC(object): ...
-                # It does NOT inherit from nn.Module. So DataParallel(self.agent) would fail.
-                # This suggests the original code might have been broken or I misread it.
-                # But wait, the original code had: self.agent = DataParallel(self.agent)
-                # I will wrap the internal modules instead if needed, or just leave it unwrapped for now to be safe as I am refactoring structure.
-                # Actually, looking at the code, SAC has self.policy and self.critic which are nn.Module.
-                # I will comment out DataParallel for the agent object itself to avoid runtime errors, as SAC is not a module.
             
-            # self.agent = DataParallel(self.agent) # Commented out as SAC is not nn.Module
-
             if self.mode == 'test':
                 print(f"Loading model from {self.load_model_weight_path}")
                 load_weight = torch.load(self.load_model_weight_path, map_location=self.device)
                 print(load_weight)
                 # load saved model weights
-                # self.agent.load_state_dict... SAC is not a module, so we need to load manually or implement load_state_dict in SAC
-                # The original code called self.agent.load_state_dict. This implies SAC WAS a module in the version that worked, or it was never tested.
-                # I will implement load_state_dict in SAC or handle it manually if I was editing robot_neural_network.
-                # For now, I will assume the user wants me to fix robot_move.py.
-                # I'll stick to the existing logic but remove DataParallel wrapping for the agent object.
-                if hasattr(self.agent, 'load_state_dict'):
-                     self.agent.load_state_dict(torch.load(self.load_model_weight_path, map_location=self.device))
+                self.agent.policy.load_state_dict(torch.load(self.load_model_weight_path, map_location=self.device))
 
 
             

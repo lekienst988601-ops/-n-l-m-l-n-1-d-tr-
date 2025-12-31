@@ -1,19 +1,12 @@
-import tensorflow as tf
 import numpy as np
 
 from collections import namedtuple, deque
 import random
-import math
-from itertools import count
-import matplotlib
-import matplotlib.pyplot as plt
 import os
 import pickle
 
 import torch
 import torch.nn as nn
-import torch.optim as optim
-from torch.optim import Adam
 import torch.nn.functional as F
 from torch.distributions import Normal
 
@@ -109,20 +102,6 @@ def update_weights(policy_net, target_net, optimizer, memory, batch_size, gamma,
     optimizer.step()
     return loss
 
-
-""" =========== Soft-Actor Critic =========== """
-# Implementation inspired from https://github.com/pranz24/pytorch-soft-actor-critic
-
-def update(target, source, tau):
-    """Update Method for SAC Only
-
-    Args:
-        target: Target Parameters to change
-        source: Origin Parameters
-        tau (float): Soft Update Policy Value
-    """
-    for target_param, param in zip(target.parameters(), source.parameters()):
-        target_param.data.copy_(target_param.data * (1.0 - tau) + param.data * tau)
 
 class QNetwork(nn.Module):
     """Q-Network For SAC Model
@@ -277,161 +256,3 @@ class GaussianPolicy(nn.Module):
         self.action_scale = self.action_scale.to(device)
         self.action_bias = self.action_bias.to(device)
         return super(GaussianPolicy, self).to(device)
-    
-class SAC(object):
-    """
-    Soft Actor-Critic
-    """
-    def __init__(self, num_inputs, update_interval, hidden_layer_size, learning_rate, device, epsilon, gamma, tau, alpha = 0.2):
-        self.epsilon = epsilon
-        self.gamma = gamma
-        self.tau = tau
-        self.alpha = alpha
-        self.update_interval = update_interval
-
-        self.device = device
-        self.hidden_layer_size = hidden_layer_size
-        self.learning_rate = learning_rate
-        action_space = 1
-
-        self.critic = QNetwork(num_inputs = num_inputs, num_actions = action_space, hidden_layer_size = self.hidden_layer_size).to(device=self.device)
-        self.critic_optim = Adam(self.critic.parameters(), lr=self.learning_rate)
-
-        self.critic_target = QNetwork(num_inputs = num_inputs, num_actions = action_space, hidden_layer_size = self.hidden_layer_size).to(device=self.device)
-        update(target = self.critic_target, source = self.critic, tau = 1)
-
-        self.policy = GaussianPolicy(num_inputs = num_inputs, num_actions = action_space, hidden_layer_size = self.hidden_layer_size, action_space = action_space, epsilon = self.epsilon).to(self.device)
-        self.policy_optim = Adam(self.policy.parameters(), lr = self.learning_rate)
-
-    def select_action(self, state, epsilon, evaluate = False):
-        """
-        Selects action based on epsilon greedy algorithm
-
-        Args:
-            state (np.array): array of observations
-            epsilon (float): epsilon-greedy value 
-            evaluate (bool, optional): False for training, True for testing. Defaults to False.
-
-        Returns:
-            action (int): action
-        """
-        import random
-        explore = True if random.random() < epsilon else False
-
-        state = torch.FloatTensor(state).to(self.device).unsqueeze(0)
-
-        if explore: #random action
-            action = random.uniform(-6.15, 6.15) # max velocity of wheels
-            action = torch.tensor([[action]], device=self.device, dtype=torch.float)
-
-        else: # greedy
-            if evaluate == False:
-                action, _, _ = self.policy.sample(state)
-            else:
-                _, _, action = self.policy.sample(state)
-        
-        return action.detach().cpu().numpy()[0]
-    
-    def update_weights(self, memory, batch_size, updates):
-        """update model weights
-        """
-        state_batch, action_batch, reward_batch, next_state_batch, mask_batch = memory.sample(batch_size=batch_size)
-
-        state_batch = torch.FloatTensor(state_batch).to(self.device)
-        next_state_batch = torch.FloatTensor(next_state_batch).to(self.device)
-        action_batch = torch.FloatTensor(action_batch).to(self.device)
-        reward_batch = torch.FloatTensor(reward_batch).to(self.device).unsqueeze(1)
-        mask_batch = torch.FloatTensor(mask_batch).to(self.device).unsqueeze(1)
-        
-        with torch.no_grad():
-            next_state_action, next_state_log_pi, _ = self.policy.sample(next_state_batch)
-            qf1_next_target, qf2_next_target = self.critic_target(next_state_batch, next_state_action)
-            min_qf_next_target = torch.min(qf1_next_target, qf2_next_target) - self.alpha * next_state_log_pi
-            next_q_value = reward_batch + mask_batch * self.gamma * (min_qf_next_target)
-        qf1, qf2 = self.critic(state_batch, action_batch)
-        qf1_loss = F.mse_loss(qf1, next_q_value)
-        qf2_loss = F.mse_loss(qf2, next_q_value)
-        qf_loss = qf1_loss + qf2_loss
-
-        self.critic_optim.zero_grad()
-        qf_loss.backward()
-        self.critic_optim.step()
-
-        pi, log_pi, _ = self.policy.sample(state_batch)
-
-        qf1_pi, qf2_pi = self.critic(state_batch, pi)
-        min_qf_pi = torch.min(qf1_pi, qf2_pi)
-
-        policy_loss = ((self.alpha * log_pi) - min_qf_pi).mean()
-        self.policy_optim.zero_grad()
-        policy_loss.backward()
-        self.policy_optim.step()
-
-        if updates % self.update_interval == 0:
-            update(self.critic_target, self.critic, self.tau)
-
-        return policy_loss.detach()
-
-
-""" =========== Actor Critic (A2C) & REINFORCE =========== """
-class FullyConnectedLayersBlock(tf.keras.layers.Layer):
-    """
-    Constructor Class for the custom layers in a fully connected NN
-    """
-    def __init__(self, hidden_layer_size, weight_decay, dropout_rate):
-        super(FullyConnectedLayersBlock,self).__init__()
-
-        print(f"h_units: {hidden_layer_size}")
-        self.dense = tf.keras.layers.Dense(hidden_layer_size, use_bias = False, 
-                                           kernel_regularizer = tf.keras.regularizers.l2(l = weight_decay))
-        
-        self.batch_normalization = tf.keras.layers.BatchNormalization()
-
-    def call(self, inputs, training = False):
-        x = self.dense(inputs)
-        x = tf.nn.relu(x)
-        x = self.batch_normalization(x, training = training)
-        return x
-
-        return 
-
-class FullyConnectedModel(tf.keras.Model):    
-    def __init__(self, model, hidden_layer_size, weight_decay, dropout_rate, num_of_outputs):
-        super(FullyConnectedModel, self).__init__()
-        self.model_name = None
-        self.model = model
-        self.checkpoint_dir = "Saved_Models/best_models/"
-        self.checkpoint_path = None
-
-        self.blocks = [FullyConnectedLayersBlock(hidden_layer_size[i], weight_decay[i], dropout_rate[i]) for i in range(3)]
-        
-        # Sets Output Layers for A2C actor and Reinforce;
-        # Uses softmax for the action-probability 
-        if self.model == "MAA2C_Actor" or self.model == 'Reinforce':
-            self.outputs = tf.keras.layers.Dense(num_of_outputs, activation = 'softmax')
-
-        # Sets Output Layers for A2C critic;
-        # Outputs a float value for critic value of State 
-        elif self.model == "MAA2C_Critic":
-            self.outputs = tf.keras.layers.Dense(num_of_outputs)
-
-        #For A2C, Combines the Actor and Critic Values into a single output
-        elif self.model == "A2C":
-            self.outputs_critic = tf.keras.layers.Dense(1)
-            self.outputs_actions = tf.keras.layers.Dense(num_of_outputs, activation = 'softmax')
-
-    def call(self, inputs, training =False):
-        for i in range(3):
-            x = self.blocks[i](inputs, training = training)
-            inputs = x
-
-        if self.model == "A2C":
-            state_value = self.outputs_critic(x)
-            probability_actions = self.outputs_actions(x)
-            probability_actions_list = [probability_actions]
-            return state_value, probability_actions_list
-        
-        else:
-            x = self.outputs(x)
-            return x
-
