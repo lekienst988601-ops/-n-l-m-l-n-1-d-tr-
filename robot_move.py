@@ -95,7 +95,10 @@ class MoveRobot:
             self.base_results_dir = model_config['testing']['base_results_dir']
             self.num_episodes = model_config['testing']['num_test_episodes']
             self.max_steps = model_config['testing']['max_steps_per_episode']
-            self.load_model_weight_path = model_config['load_model_weights_path']
+            if 'load_model_weights_path' in model_config:
+                self.load_model_weight_path = model_config['load_model_weights_path']
+            else:
+                self.load_model_weight_path = model_config['testing'].get('load_model_weights_path')
 
             self.epsilon_decay_type = None
             self.save_model_weights = False
