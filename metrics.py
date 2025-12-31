@@ -2,7 +2,7 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 
-from .generics import euclidean_distance
+from generics import euclidean_distance
 
 def average(list):
     return sum(list)/len(list)
